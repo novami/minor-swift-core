@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- app-test and app-release take optional `cache-path` and `cache-key-files` inputs to cache a script-built product (e.g. a bundled ffmpeg); saved only from the default branch (release only restores).
+
 ## 0.1.3
 
 - Reverted the DerivedData cache in app-test (no measurable speedup on runners).
