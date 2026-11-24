@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Reverted the DerivedData cache in app-test (no measurable speedup on runners).
+
 ## 0.1.2
 
 - app-test workflow caches DerivedData (saved only from the default branch).
