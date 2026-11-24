@@ -1,0 +1,135 @@
+# Reusable release job: Developer ID signing, notarization, GitHub Release with <Product>-<version>.zip.
+# Caller runs on a pushed tag X.Y.Z and passes `secrets: inherit`.
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      scheme:
+        type: string
+        required: true
+      runner:
+        type: string
+        default: macos-26
+      xcode-path:
+        type: string
+        default: ""
+    secrets:
+      DEVELOPER_ID_P12:
+        required: true
+      DEVELOPER_ID_P12_PASSWORD:
+        required: true
+      ASC_KEY_ID:
+        required: true
+      ASC_ISSUER_ID:
+        required: true
+      ASC_KEY_P8:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runner }}
+    env:
+      SCHEME: ${{ inputs.scheme }}
+      TAG: ${{ github.ref_name }}
+      KEYCHAIN: ${{ runner.temp }}/release.keychain-db
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        if: inputs.xcode-path != ''
+        run: sudo xcode-select -s "${{ inputs.xcode-path }}"
+
+      - name: Validate tag and version
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Tag '$TAG' is not major.minor.patch"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || fail "Tagged commit is not on main"
+
+          settings=$(xcodebuild -showBuildSettings -json -scheme "$SCHEME" -configuration Release 2>/dev/null \
+            | jq --arg t "$SCHEME" '.[] | select(.target == $t) | .buildSettings')
+          version=$(jq -r .MARKETING_VERSION <<< "$settings")
+          team=$(jq -r '.DEVELOPMENT_TEAM // ""' <<< "$settings")
+          product=$(jq -r .PRODUCT_NAME <<< "$settings")
+
+          [ "$version" = "$TAG" ] || fail "Tag $TAG does not match MARKETING_VERSION $version"
+          [ -n "$team" ] || fail "DEVELOPMENT_TEAM is empty (Config/App.xcconfig)"
+          { echo "TEAM_ID=$team"; echo "PRODUCT=$product"; echo "ASSET=$product-$TAG.zip"; } >> "$GITHUB_ENV"
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          password=$(openssl rand -base64 24)
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$password" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$password" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Archive and export
+        run: |
+          xcodebuild archive -quiet -scheme "$SCHEME" -configuration Release \
+            -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM="$TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN --timestamp"
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>developer-id</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Developer ID Application</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Notarize and staple
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          app="$RUNNER_TEMP/export/$PRODUCT.app"
+          key="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_KEY_P8" | base64 --decode > "$key"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+
+          result=$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait --timeout 30m --output-format json \
+            --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+          echo "$result"
+          if [ "$(jq -r .status <<< "$result")" != "Accepted" ]; then
+            xcrun notarytool log "$(jq -r .id <<< "$result")" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
+            exit 1
+          fi
+
+          xcrun stapler staple "$app"
+          spctl --assess --type execute -vv "$app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/$ASSET"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Notes = section "## X.Y.Z" of CHANGELOG.md, otherwise generated from commits.
+          awk -v v="$TAG" '$0 ~ "^## " { if (p) exit; p = ($2 == v); next } p' CHANGELOG.md > "$RUNNER_TEMP/notes.md" 2>/dev/null || true
+          if [ -s "$RUNNER_TEMP/notes.md" ]; then notes=(--notes-file "$RUNNER_TEMP/notes.md"); else notes=(--generate-notes); fi
+          gh release create "$TAG" "$RUNNER_TEMP/$ASSET" --title "$TAG" --verify-tag "${notes[@]}"
+
+      - name: Clean up
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12"
