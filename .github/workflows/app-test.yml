@@ -28,9 +28,29 @@ jobs:
         if: inputs.xcode-path != ''
         run: sudo xcode-select -s "${{ inputs.xcode-path }}"
 
+      - name: Cache key
+        id: key
+        run: echo "xcode=$(xcodebuild -version | tr -s '\n ' '--')" >> "$GITHUB_OUTPUT"
+
+      # DerivedData cache: restored on every run, saved only from the default branch.
+      - name: Restore DerivedData
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/DerivedData
+          key: derived-${{ runner.os }}-${{ steps.key.outputs.xcode }}-${{ hashFiles('**/Package.resolved', '**/project.pbxproj', 'Config/*.xcconfig') }}
+          restore-keys: derived-${{ runner.os }}-${{ steps.key.outputs.xcode }}-
+
       - name: Build and test
         env:
           SCHEME: ${{ inputs.scheme }}
         run: |
-          xcodebuild -version
-          xcodebuild test -quiet -scheme "$SCHEME" -destination 'platform=macOS,arch=arm64'
+          xcodebuild test -quiet -scheme "$SCHEME" -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData"
+
+      - name: Save DerivedData
+        if: github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/DerivedData
+          key: ${{ steps.cache.outputs.cache-primary-key }}
