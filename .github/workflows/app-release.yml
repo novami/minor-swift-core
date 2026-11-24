@@ -35,7 +35,6 @@ jobs:
     env:
       SCHEME: ${{ inputs.scheme }}
       TAG: ${{ github.ref_name }}
-      KEYCHAIN: ${{ runner.temp }}/release.keychain-db
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,7 +58,7 @@ jobs:
 
           [ "$version" = "$TAG" ] || fail "Tag $TAG does not match MARKETING_VERSION $version"
           [ -n "$team" ] || fail "DEVELOPMENT_TEAM is empty (Config/App.xcconfig)"
-          { echo "TEAM_ID=$team"; echo "PRODUCT=$product"; echo "ASSET=$product-$TAG.zip"; } >> "$GITHUB_ENV"
+          { echo "TEAM_ID=$team"; echo "PRODUCT=$product"; echo "ASSET=$product-$TAG.zip"; echo "KEYCHAIN=$RUNNER_TEMP/release.keychain-db"; } >> "$GITHUB_ENV"
 
       - name: Import signing certificate
         env:
