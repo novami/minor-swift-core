@@ -14,6 +14,14 @@ on:
         description: Optional Xcode.app path; the runner default is used when empty.
         type: string
         default: ""
+      cache-path:
+        description: Optional path of a build product to cache between runs (e.g. a bundled binary built by a script).
+        type: string
+        default: ""
+      cache-key-files:
+        description: Glob of files whose hash is the cache key (e.g. the build script); required with cache-path.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -28,9 +36,24 @@ jobs:
         if: inputs.xcode-path != ''
         run: sudo xcode-select -s "${{ inputs.xcode-path }}"
 
+      - name: Restore build cache
+        id: cache
+        if: inputs.cache-path != '' && inputs.cache-key-files != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ inputs.cache-path }}
+          key: build-${{ runner.os }}-${{ inputs.cache-path }}-${{ hashFiles(inputs.cache-key-files) }}
+
       - name: Build and test
         env:
           SCHEME: ${{ inputs.scheme }}
         run: |
           xcodebuild -version
           xcodebuild test -quiet -scheme "$SCHEME" -destination 'platform=macOS,arch=arm64'
+
+      - name: Save build cache
+        if: success() && steps.cache.outputs.cache-hit != 'true' && inputs.cache-path != '' && inputs.cache-key-files != '' && github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ inputs.cache-path }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
