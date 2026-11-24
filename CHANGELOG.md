@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Fixed release workflow (runner context in job env).
+
 ## 0.1.0
 
 - MinorLog: unified `os.Logger` per subsystem, diagnostics export.
