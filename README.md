@@ -19,7 +19,7 @@ No external runtime dependencies.
 - Expects asset `<AppName>-<major.minor.patch>.zip` (the bundle name without `.app`).
 - Before replacing the app it checks: SHA-256 digest from GitHub, Developer ID signature of the same Team ID
   as the running app, same bundle ID, strictly newer version.
-- Disabled for unsigned / ad-hoc builds (local Debug) and must not be used in Mac App Store builds.
+- Disabled for unsigned / ad-hoc builds (local Debug).
 - If the app location is not writable, it opens the release page instead.
 
 ## Reusable workflows
