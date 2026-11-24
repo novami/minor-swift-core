@@ -30,7 +30,7 @@ No external runtime dependencies.
 | `app-test.yml` | `xcodebuild test` (input `scheme`) |
 | `app-release.yml` | archive → Developer ID sign → notarize → staple → GitHub Release (input `scheme`, `secrets: inherit`) |
 
-Reference them by tag, e.g. `uses: novami/MinorSwiftCore/.github/workflows/lint.yml@0.1.0`.
+Reference them by tag, e.g. `uses: novami/minor-swift-core/.github/workflows/lint.yml@0.1.0`.
 
 ### Secrets required in each app repository
 
