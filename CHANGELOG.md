@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- app-test workflow caches DerivedData (saved only from the default branch).
+
 ## 0.1.1
 
 - Fixed release workflow (runner context in job env).
